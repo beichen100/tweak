@@ -287,66 +287,68 @@ jobs:
     # ============================================
     - name: Generate Build Info
       run: |
-        cat > BUILD_INFO.md << 'EOF'
-# VCAM Test Build - iOS 14.6 兼容版本
-
-## 🎯 构建信息
-
-- **版本**: Hello World 测试版
-- **SDK**: iOS 14.5 (最接近 iOS 14.6)
-- **目标设备**: iPhone 12, iOS 14.6
-- **架构**: arm64
-- **最低支持**: iOS 14.0
-- **构建环境**: Ubuntu + Theos (Linux)
-
-## ✅ 这个版本的特点
-
-- **使用旧版 SDK**: iOS 14.5 而非 iOS 26.1
-- **最小化测试**: 仅包含 Hello World 功能
-- **完全兼容**: 专为 iOS 14.6 优化
-
-## 📝 测试说明
-
-### 功能
-1. Hook SpringBoard 启动
-2. 打印系统日志
-3. 显示测试弹窗（3秒后出现）
-
-### 安装
-```bash
-# 传输到设备
-scp -P 2222 *.deb root@localhost:/var/root/
-
-# 安装
-ssh -p 2222 root@localhost
-dpkg -i /var/root/*.deb
-killall -9 SpringBoard
-```
-
-### 期望结果
-- ✅ SpringBoard 正常重启
-- ✅ 弹出 "VCAM Test" 提示框
-- ✅ 系统日志中有 VCAM 输出
-- ✅ **不崩溃**
-
-### 如果成功
-说明问题确实是 M4 Mac 的 SDK 版本导致的，原项目代码本身没问题。
-
-### 如果失败
-说明可能还有其他兼容性问题，需要进一步调试。
-
-## 🔍 查看日志
-```bash
-ssh -p 2222 root@localhost
-log show --last 5m --predicate 'eventMessage contains "VCAM"'
-```
-
----
-
-**构建时间**: $(date -u)
-**Commit**: ${{ github.sha }}
-**分支**: ${{ github.ref_name }}
-EOF
+        cat > BUILD_INFO.md << 'BUILD_INFO_EOF'
+        # VCAM Test Build - iOS 14.6 兼容版本
+        
+        ## 🎯 构建信息
+        
+        - **版本**: Hello World 测试版
+        - **SDK**: iOS 14.5 (最接近 iOS 14.6)
+        - **目标设备**: iPhone 12, iOS 14.6
+        - **架构**: arm64
+        - **最低支持**: iOS 14.0
+        - **构建环境**: Ubuntu + Theos (Linux)
+        
+        ## ✅ 这个版本的特点
+        
+        - **使用旧版 SDK**: iOS 14.5 而非 iOS 26.1
+        - **最小化测试**: 仅包含 Hello World 功能
+        - **完全兼容**: 专为 iOS 14.6 优化
+        
+        ## 📝 测试说明
+        
+        ### 功能
+        1. Hook SpringBoard 启动
+        2. 打印系统日志
+        3. 显示测试弹窗（3秒后出现）
+        
+        ### 安装
+        ```bash
+        # 传输到设备
+        scp -P 2222 *.deb root@localhost:/var/root/
+        
+        # 安装
+        ssh -p 2222 root@localhost
+        dpkg -i /var/root/*.deb
+        killall -9 SpringBoard
+        ```
+        
+        ### 期望结果
+        - ✅ SpringBoard 正常重启
+        - ✅ 弹出 "VCAM Test" 提示框
+        - ✅ 系统日志中有 VCAM 输出
+        - ✅ **不崩溃**
+        
+        ### 如果成功
+        说明问题确实是 M4 Mac 的 SDK 版本导致的，原项目代码本身没问题。
+        
+        ### 如果失败
+        说明可能还有其他兼容性问题，需要进一步调试。
+        
+        ## 🔍 查看日志
+        ```bash
+        ssh -p 2222 root@localhost
+        log show --last 5m --predicate 'eventMessage contains "VCAM"'
+        ```
+        BUILD_INFO_EOF
+        
+        # 添加构建元数据
+        echo "" >> BUILD_INFO.md
+        echo "---" >> BUILD_INFO.md
+        echo "" >> BUILD_INFO.md
+        echo "**构建时间**: $(date -u)" >> BUILD_INFO.md
+        echo "**Commit**: ${{ github.sha }}" >> BUILD_INFO.md
+        echo "**分支**: ${{ github.ref_name }}" >> BUILD_INFO.md
         
         cat BUILD_INFO.md
 
