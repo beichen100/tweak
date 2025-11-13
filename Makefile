@@ -9,4 +9,5 @@ TWEAK_NAME = VCAM
 VCAM_FILES = Tweak.x
 VCAM_CFLAGS = -fobjc-arc
 
+DPKG_DEB = dpkg-deb -Zgzip -z6
 include $(THEOS_MAKE_PATH)/tweak.mk
