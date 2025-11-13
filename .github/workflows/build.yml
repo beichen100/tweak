@@ -18,6 +18,8 @@ jobs:
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
+      with:
+        submodules: true
 
     # ============================================
     # 缓存策略：加速构建
@@ -83,62 +85,85 @@ jobs:
         fi
 
     # ============================================
-    # 安装 Theos + iOS 14.5 SDK
+    # 使用官方 Theos 安装器
     # ============================================
     - name: Install Theos
       if: steps.cache-theos.outputs.cache-hit != 'true'
       run: |
-        echo "=== 安装 Theos 框架 ==="
-        sudo git clone --recursive https://github.com/theos/theos.git $THEOS
-        sudo chown -R $USER:$USER $THEOS
+        echo "=== 使用官方 Theos 安装器 ==="
         
-        # 使用系统 clang（Ubuntu 自带，最可靠）
-        echo "=== 配置编译工具链 ==="
-        mkdir -p $THEOS/toolchain/linux/iphone/bin
+        # 官方安装脚本会自动处理工具链
+        if bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"; then
+          echo "✅ Theos 安装成功"
+          
+          # 验证安装
+          if [ -d "$THEOS" ] && [ -f "$THEOS/makefiles/common.mk" ]; then
+            echo "✅ Theos 安装验证成功"
+          else
+            echo "❌ Theos 安装验证失败"
+            exit 1
+          fi
+        else
+          echo "❌ 官方安装器失败，尝试手动安装"
+          
+          # 回退方案：手动安装
+          sudo git clone --recursive https://github.com/theos/theos.git $THEOS
+          sudo chown -R $USER:$USER $THEOS
+          
+          # 下载工具链
+          echo "=== 下载 iOS 工具链 ==="
+          mkdir -p $THEOS/toolchain
+          
+          if curl --max-time 300 -fsSL https://github.com/kabiroberai/toolchain/releases/download/20210228/ios-linux.tar.gz -o /tmp/toolchain.tar.gz; then
+            if file /tmp/toolchain.tar.gz | grep -q "gzip compressed"; then
+              tar xzf /tmp/toolchain.tar.gz -C $THEOS/toolchain
+              rm /tmp/toolchain.tar.gz
+              echo "✅ 工具链安装成功"
+            else
+              echo "❌ 工具链文件格式错误"
+              exit 1
+            fi
+          else
+            echo "❌ 工具链下载失败"
+            exit 1
+          fi
+        fi
         
-        # 创建符号链接指向系统编译器
-        ln -sf /usr/bin/clang $THEOS/toolchain/linux/iphone/bin/clang
-        ln -sf /usr/bin/clang++ $THEOS/toolchain/linux/iphone/bin/clang++
-        ln -sf /usr/bin/ar $THEOS/toolchain/linux/iphone/bin/ar
-        ln -sf /usr/bin/strip $THEOS/toolchain/linux/iphone/bin/strip
-        
-        echo "✅ 工具链配置完成（使用系统 clang）"
-        clang --version
-        
-        # 下载 iOS 14.5 SDK（最接近 iOS 14.6）
-        echo "=== 下载 iOS 14.5 SDK ==="
+        # 下载 iOS 14.5 SDK
+        echo "=== 下载 iOS SDK ==="
         mkdir -p $THEOS/sdks
         
-        # 从 theos/sdks 仓库下载
-        if curl --max-time 180 -L https://github.com/theos/sdks/archive/master.zip -o /tmp/sdks.zip; then
-          unzip -q /tmp/sdks.zip -d /tmp
-          
-          # 优先使用 iOS 14.x SDK
-          if [ -d "/tmp/sdks-master/iPhoneOS14.5.sdk" ]; then
-            cp -r /tmp/sdks-master/iPhoneOS14.5.sdk $THEOS/sdks/
-            echo "✅ 使用 iOS 14.5 SDK"
-          elif [ -d "/tmp/sdks-master/iPhoneOS14.4.sdk" ]; then
-            cp -r /tmp/sdks-master/iPhoneOS14.4.sdk $THEOS/sdks/iPhoneOS14.5.sdk
-            echo "✅ 使用 iOS 14.4 SDK (重命名为 14.5)"
-          else
-            # 找任何 14.x SDK
-            SDK_14=$(find /tmp/sdks-master -name "iPhoneOS14.*.sdk" -type d | head -1)
-            if [ -n "$SDK_14" ]; then
-              cp -r "$SDK_14" $THEOS/sdks/iPhoneOS14.5.sdk
-              echo "✅ 使用 $(basename $SDK_14)"
+        if curl --max-time 180 -LO https://github.com/theos/sdks/archive/master.zip; then
+          if unzip -q master.zip; then
+            # 优先使用 iOS 14.x SDK
+            if [ -d "sdks-master/iPhoneOS14.5.sdk" ]; then
+              cp -r sdks-master/iPhoneOS14.5.sdk $THEOS/sdks/
+              echo "✅ 使用 iOS 14.5 SDK"
+            elif [ -d "sdks-master/iPhoneOS14.4.sdk" ]; then
+              cp -r sdks-master/iPhoneOS14.4.sdk $THEOS/sdks/iPhoneOS14.5.sdk
+              echo "✅ 使用 iOS 14.4 SDK (重命名为 14.5)"
             else
-              # 回退到 13.7 SDK
-              if [ -d "/tmp/sdks-master/iPhoneOS13.7.sdk" ]; then
-                cp -r /tmp/sdks-master/iPhoneOS13.7.sdk $THEOS/sdks/
-                echo "⚠️  使用 iOS 13.7 SDK (14.x 不可用)"
+              # 找任何 14.x SDK
+              SDK_14=$(find sdks-master -name "iPhoneOS14.*.sdk" -type d | head -1)
+              if [ -n "$SDK_14" ]; then
+                cp -r "$SDK_14" $THEOS/sdks/iPhoneOS14.5.sdk
+                echo "✅ 使用 $(basename $SDK_14)"
               else
-                echo "❌ 找不到合适的 iOS SDK"
-                exit 1
+                # 回退到 13.7 SDK
+                if [ -d "sdks-master/iPhoneOS13.7.sdk" ]; then
+                  cp -r sdks-master/iPhoneOS13.7.sdk $THEOS/sdks/
+                  echo "⚠️  使用 iOS 13.7 SDK (14.x 不可用)"
+                else
+                  echo "❌ 找不到合适的 iOS SDK"
+                  exit 1
+                fi
               fi
             fi
+            rm -rf master.zip sdks-master
+          else
+            echo "❌ SDK 解压失败"
+            exit 1
           fi
-          
-          rm -rf /tmp/sdks.zip /tmp/sdks-master
         else
           echo "❌ SDK 下载失败"
           exit 1
@@ -166,18 +191,21 @@ jobs:
           exit 1
         fi
         
-        # 检查工具链
-        if [ -x "$THEOS/toolchain/linux/iphone/bin/clang" ]; then
-          echo "✅ iOS 工具链已安装"
-          $THEOS/toolchain/linux/iphone/bin/clang --version | head -1
-        elif [ -x "$THEOS/toolchain/bin/clang" ]; then
-          echo "✅ 工具链已安装"
-          $THEOS/toolchain/bin/clang --version | head -1
-        elif command -v clang >/dev/null 2>&1; then
-          echo "✅ 使用系统 clang (回退方案)"
-          clang --version | head -1
-        else
-          echo "❌ 找不到任何可用的编译器"
+        # 检查工具链（支持多种可能的位置）
+        CLANG_FOUND=false
+        for clang_path in \
+          "$THEOS/toolchain/linux/iphone/bin/clang" \
+          "$THEOS/toolchain/bin/clang" \
+          "$(which clang)"; do
+          if [ -x "$clang_path" ]; then
+            echo "✅ 找到编译器: $clang_path"
+            CLANG_FOUND=true
+            break
+          fi
+        done
+        
+        if [ "$CLANG_FOUND" = false ]; then
+          echo "❌ 找不到编译器"
           exit 1
         fi
 
@@ -235,14 +263,14 @@ jobs:
           echo "✅ 编译成功"
           
           # 检查生成的文件
-          if ls packages/*.deb >/dev/null 2>&1; then
+          if ls packages/*.deb >/dev/null 2>&1 || ls *.deb >/dev/null 2>&1; then
             echo "✅ deb 包已生成"
-            ls -lh packages/*.deb
+            ls -lh packages/*.deb *.deb 2>/dev/null || true
             
             # 显示文件信息
             echo ""
             echo "=== 生成的 deb 包信息 ==="
-            dpkg-deb -I packages/*.deb
+            dpkg-deb -I packages/*.deb 2>/dev/null || dpkg-deb -I *.deb 2>/dev/null || true
             
           else
             echo "❌ 找不到 deb 包"
@@ -261,21 +289,26 @@ jobs:
         echo "=== 验证二进制文件 ==="
         
         # 解压 deb 查看二进制
-        DEB_FILE=$(ls packages/*.deb | head -1)
-        mkdir -p /tmp/deb_extract
-        dpkg-deb -x "$DEB_FILE" /tmp/deb_extract
+        DEB_FILE=$(ls packages/*.deb 2>/dev/null | head -1 || ls *.deb 2>/dev/null | head -1)
         
-        DYLIB_FILE=$(find /tmp/deb_extract -name "VCAM.dylib" | head -1)
-        
-        if [ -f "$DYLIB_FILE" ]; then
-          echo "✅ 找到 dylib: $DYLIB_FILE"
-          echo ""
-          echo "文件信息:"
-          file "$DYLIB_FILE"
-          echo ""
-          echo "大小: $(ls -lh "$DYLIB_FILE" | awk '{print $5}')"
+        if [ -f "$DEB_FILE" ]; then
+          mkdir -p /tmp/deb_extract
+          dpkg-deb -x "$DEB_FILE" /tmp/deb_extract
+          
+          DYLIB_FILE=$(find /tmp/deb_extract -name "VCAM.dylib" | head -1)
+          
+          if [ -f "$DYLIB_FILE" ]; then
+            echo "✅ 找到 dylib: $DYLIB_FILE"
+            echo ""
+            echo "文件信息:"
+            file "$DYLIB_FILE"
+            echo ""
+            echo "大小: $(ls -lh "$DYLIB_FILE" | awk '{print $5}')"
+          else
+            echo "❌ 找不到 VCAM.dylib"
+          fi
         else
-          echo "❌ 找不到 VCAM.dylib"
+          echo "❌ 找不到 deb 文件"
         fi
 
     # ============================================
@@ -285,7 +318,9 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: VCAM-Test-iOS14.6-${{ github.sha }}
-        path: packages/*.deb
+        path: |
+          packages/*.deb
+          *.deb
         retention-days: 30
 
     # ============================================
@@ -378,9 +413,9 @@ jobs:
         echo "✅ 目标: iOS 14.6 (iPhone 12)"
         echo "✅ 架构: arm64"
         echo ""
-        if [ -f packages/*.deb ]; then
+        if ls packages/*.deb *.deb 2>/dev/null; then
           echo "📦 生成的包:"
-          ls -lh packages/*.deb
+          ls -lh packages/*.deb *.deb 2>/dev/null || true
         fi
         echo ""
         echo "💡 下载 Artifacts 来获取 deb 包"
