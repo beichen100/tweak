@@ -92,43 +92,18 @@ jobs:
         sudo git clone --recursive https://github.com/theos/theos.git $THEOS
         sudo chown -R $USER:$USER $THEOS
         
-        # 安装 iOS 工具链
-        echo "=== 下载 iOS Linux 工具链 ==="
-        mkdir -p $THEOS/toolchain
+        # 使用系统 clang（Ubuntu 自带，最可靠）
+        echo "=== 配置编译工具链 ==="
+        mkdir -p $THEOS/toolchain/linux/iphone/bin
         
-        # 使用更新的工具链源
-        TOOLCHAIN_URL="https://github.com/sbingner/llvm-project/releases/download/v10.0.0-1/linux-ios-arm64e-clang-toolchain.tar.lzma"
+        # 创建符号链接指向系统编译器
+        ln -sf /usr/bin/clang $THEOS/toolchain/linux/iphone/bin/clang
+        ln -sf /usr/bin/clang++ $THEOS/toolchain/linux/iphone/bin/clang++
+        ln -sf /usr/bin/ar $THEOS/toolchain/linux/iphone/bin/ar
+        ln -sf /usr/bin/strip $THEOS/toolchain/linux/iphone/bin/strip
         
-        echo "尝试下载工具链..."
-        if curl --fail --max-time 300 -L "$TOOLCHAIN_URL" -o /tmp/toolchain.tar.lzma 2>&1 | grep -v "^[0-9 ]*$"; then
-          echo "✅ 工具链下载成功"
-          
-          # 检查文件大小
-          FILE_SIZE=$(stat -f%z /tmp/toolchain.tar.lzma 2>/dev/null || stat -c%s /tmp/toolchain.tar.lzma)
-          if [ "$FILE_SIZE" -lt 1000 ]; then
-            echo "❌ 下载的文件太小，可能是错误页面"
-            cat /tmp/toolchain.tar.lzma
-            
-            # 回退方案：使用系统 clang
-            echo "⚠️  使用系统 clang 作为回退方案"
-            mkdir -p $THEOS/toolchain/linux/iphone/bin
-            ln -s /usr/bin/clang $THEOS/toolchain/linux/iphone/bin/clang
-            ln -s /usr/bin/clang++ $THEOS/toolchain/linux/iphone/bin/clang++
-          else
-            # 安装 lzma 解压工具
-            sudo apt-get install -y xz-utils
-            
-            # 解压工具链
-            cd $THEOS/toolchain
-            tar --lzma -xf /tmp/toolchain.tar.lzma
-            rm /tmp/toolchain.tar.lzma
-          fi
-        else
-          echo "⚠️  工具链下载失败，使用系统 clang"
-          mkdir -p $THEOS/toolchain/linux/iphone/bin
-          ln -s /usr/bin/clang $THEOS/toolchain/linux/iphone/bin/clang
-          ln -s /usr/bin/clang++ $THEOS/toolchain/linux/iphone/bin/clang++
-        fi
+        echo "✅ 工具链配置完成（使用系统 clang）"
+        clang --version
         
         # 下载 iOS 14.5 SDK（最接近 iOS 14.6）
         echo "=== 下载 iOS 14.5 SDK ==="
@@ -192,10 +167,17 @@ jobs:
         fi
         
         # 检查工具链
-        if [ -x "$THEOS/toolchain/linux/iphone/bin/clang" ] || [ -x "$THEOS/toolchain/bin/clang" ]; then
+        if [ -x "$THEOS/toolchain/linux/iphone/bin/clang" ]; then
+          echo "✅ iOS 工具链已安装"
+          $THEOS/toolchain/linux/iphone/bin/clang --version | head -1
+        elif [ -x "$THEOS/toolchain/bin/clang" ]; then
           echo "✅ 工具链已安装"
+          $THEOS/toolchain/bin/clang --version | head -1
+        elif command -v clang >/dev/null 2>&1; then
+          echo "✅ 使用系统 clang (回退方案)"
+          clang --version | head -1
         else
-          echo "❌ 工具链未找到"
+          echo "❌ 找不到任何可用的编译器"
           exit 1
         fi
 
