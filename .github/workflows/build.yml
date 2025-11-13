@@ -1,0 +1,378 @@
+name: Build VCAM Test (iOS 14.6 Compatible)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  THEOS: /opt/theos
+  CACHE_VERSION: v1
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    # ============================================
+    # 缓存策略：加速构建
+    # ============================================
+    - name: Cache Theos Framework
+      id: cache-theos
+      uses: actions/cache@v4
+      with:
+        path: /opt/theos
+        key: theos-${{ env.CACHE_VERSION }}-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
+        restore-keys: |
+          theos-${{ env.CACHE_VERSION }}-${{ runner.os }}-
+
+    - name: Cache ldid Binary
+      id: cache-ldid
+      uses: actions/cache@v4
+      with:
+        path: /usr/local/bin/ldid
+        key: ldid-${{ env.CACHE_VERSION }}-${{ runner.os }}-v2.1.5-procursus2
+
+    # ============================================
+    # 安装基础依赖
+    # ============================================
+    - name: Setup Build Environment
+      run: |
+        echo "=== 设置构建环境 ==="
+        sudo apt-get update -y
+        sudo apt-get install -y build-essential git curl wget unzip fakeroot file perl python3
+        echo "✅ 基础工具安装完成"
+
+    # ============================================
+    # 安装 ldid（代码签名工具）
+    # ============================================
+    - name: Install ldid
+      if: steps.cache-ldid.outputs.cache-hit != 'true'
+      run: |
+        echo "=== 安装 ldid ==="
+        LDID_VERSION="v2.1.5-procursus2"
+        LDID_URL="https://github.com/ProcursusTeam/ldid/releases/download/${LDID_VERSION}/ldid_linux_x86_64"
+        
+        if curl -L --max-time 60 -o /tmp/ldid "$LDID_URL"; then
+          if file /tmp/ldid | grep -q "ELF.*executable"; then
+            sudo mv /tmp/ldid /usr/local/bin/ldid
+            sudo chmod +x /usr/local/bin/ldid
+            echo "✅ ldid 安装成功"
+          else
+            echo "❌ ldid 文件无效"
+            exit 1
+          fi
+        else
+          echo "❌ ldid 下载失败"
+          exit 1
+        fi
+
+    - name: Verify ldid
+      run: |
+        if command -v ldid >/dev/null 2>&1; then
+          echo "✅ ldid 可用: $(which ldid)"
+          ldid 2>&1 | head -3 || true
+        else
+          echo "❌ ldid 不可用"
+          exit 1
+        fi
+
+    # ============================================
+    # 安装 Theos + iOS 14.5 SDK
+    # ============================================
+    - name: Install Theos
+      if: steps.cache-theos.outputs.cache-hit != 'true'
+      run: |
+        echo "=== 安装 Theos 框架 ==="
+        sudo git clone --recursive https://github.com/theos/theos.git $THEOS
+        sudo chown -R $USER:$USER $THEOS
+        
+        # 安装 iOS 工具链
+        echo "=== 下载 iOS Linux 工具链 ==="
+        mkdir -p $THEOS/toolchain
+        
+        # 尝试多个工具链源
+        if curl --max-time 300 -L https://github.com/kabiroberai/toolchain/releases/download/20210228/ios-linux.tar.gz -o /tmp/toolchain.tar.gz; then
+          echo "✅ 工具链下载成功"
+          tar xzf /tmp/toolchain.tar.gz -C $THEOS/toolchain
+          rm /tmp/toolchain.tar.gz
+        else
+          echo "❌ 工具链下载失败"
+          exit 1
+        fi
+        
+        # 下载 iOS 14.5 SDK（最接近 iOS 14.6）
+        echo "=== 下载 iOS 14.5 SDK ==="
+        mkdir -p $THEOS/sdks
+        
+        # 从 theos/sdks 仓库下载
+        if curl --max-time 180 -L https://github.com/theos/sdks/archive/master.zip -o /tmp/sdks.zip; then
+          unzip -q /tmp/sdks.zip -d /tmp
+          
+          # 优先使用 iOS 14.x SDK
+          if [ -d "/tmp/sdks-master/iPhoneOS14.5.sdk" ]; then
+            cp -r /tmp/sdks-master/iPhoneOS14.5.sdk $THEOS/sdks/
+            echo "✅ 使用 iOS 14.5 SDK"
+          elif [ -d "/tmp/sdks-master/iPhoneOS14.4.sdk" ]; then
+            cp -r /tmp/sdks-master/iPhoneOS14.4.sdk $THEOS/sdks/iPhoneOS14.5.sdk
+            echo "✅ 使用 iOS 14.4 SDK (重命名为 14.5)"
+          else
+            # 找任何 14.x SDK
+            SDK_14=$(find /tmp/sdks-master -name "iPhoneOS14.*.sdk" -type d | head -1)
+            if [ -n "$SDK_14" ]; then
+              cp -r "$SDK_14" $THEOS/sdks/iPhoneOS14.5.sdk
+              echo "✅ 使用 $(basename $SDK_14)"
+            else
+              # 回退到 13.7 SDK
+              if [ -d "/tmp/sdks-master/iPhoneOS13.7.sdk" ]; then
+                cp -r /tmp/sdks-master/iPhoneOS13.7.sdk $THEOS/sdks/
+                echo "⚠️  使用 iOS 13.7 SDK (14.x 不可用)"
+              else
+                echo "❌ 找不到合适的 iOS SDK"
+                exit 1
+              fi
+            fi
+          fi
+          
+          rm -rf /tmp/sdks.zip /tmp/sdks-master
+        else
+          echo "❌ SDK 下载失败"
+          exit 1
+        fi
+
+    - name: Verify Theos Installation
+      run: |
+        echo "=== 验证 Theos 安装 ==="
+        
+        if [ -d "$THEOS" ] && [ -f "$THEOS/makefiles/common.mk" ]; then
+          echo "✅ Theos: $THEOS"
+        else
+          echo "❌ Theos 未正确安装"
+          exit 1
+        fi
+        
+        # 检查 SDK
+        if [ -d "$THEOS/sdks/iPhoneOS14.5.sdk" ]; then
+          echo "✅ iOS 14.5 SDK 已就绪"
+        elif [ -d "$THEOS/sdks/iPhoneOS13.7.sdk" ]; then
+          echo "✅ iOS 13.7 SDK 已就绪"
+        else
+          echo "❌ 找不到 iOS SDK"
+          ls -la $THEOS/sdks/
+          exit 1
+        fi
+        
+        # 检查工具链
+        if [ -x "$THEOS/toolchain/linux/iphone/bin/clang" ] || [ -x "$THEOS/toolchain/bin/clang" ]; then
+          echo "✅ 工具链已安装"
+        else
+          echo "❌ 工具链未找到"
+          exit 1
+        fi
+
+    # ============================================
+    # 修改 Makefile 使用正确的 SDK
+    # ============================================
+    - name: Configure Makefile for iOS 14.6
+      run: |
+        echo "=== 配置 Makefile ==="
+        
+        # 备份原始 Makefile
+        cp Makefile Makefile.backup
+        
+        # 创建针对 iOS 14.6 优化的 Makefile
+        cat > Makefile << 'EOF'
+export TARGET = iphone:clang:14.5:14.0
+export ARCHS = arm64
+INSTALL_TARGET_PROCESSES = SpringBoard
+
+include $(THEOS)/makefiles/common.mk
+
+TWEAK_NAME = VCAM
+
+VCAM_FILES = Tweak.x
+VCAM_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
+VCAM_FRAMEWORKS = UIKit Foundation
+
+include $(THEOS_MAKE_PATH)/tweak.mk
+EOF
+        
+        echo "✅ Makefile 已配置为使用 iOS 14.5 SDK"
+        cat Makefile
+
+    # ============================================
+    # 编译项目
+    # ============================================
+    - name: Build Project
+      env:
+        THEOS: ${{ env.THEOS }}
+      run: |
+        export PATH="$THEOS/bin:$PATH"
+        
+        echo "=== 开始编译 VCAM Test ==="
+        echo "THEOS: $THEOS"
+        echo "TARGET: iOS 14.5 SDK, deployment target 14.0"
+        
+        if make clean; then
+          echo "✅ 清理完成"
+        else
+          echo "❌ 清理失败"
+          exit 1
+        fi
+        
+        if make package FINALPACKAGE=1; then
+          echo "✅ 编译成功"
+          
+          # 检查生成的文件
+          if ls packages/*.deb >/dev/null 2>&1; then
+            echo "✅ deb 包已生成"
+            ls -lh packages/*.deb
+            
+            # 显示文件信息
+            echo ""
+            echo "=== 生成的 deb 包信息 ==="
+            dpkg-deb -I packages/*.deb
+            
+          else
+            echo "❌ 找不到 deb 包"
+            exit 1
+          fi
+        else
+          echo "❌ 编译失败"
+          exit 1
+        fi
+
+    # ============================================
+    # 验证二进制兼容性
+    # ============================================
+    - name: Verify Binary Compatibility
+      run: |
+        echo "=== 验证二进制文件 ==="
+        
+        # 解压 deb 查看二进制
+        DEB_FILE=$(ls packages/*.deb | head -1)
+        mkdir -p /tmp/deb_extract
+        dpkg-deb -x "$DEB_FILE" /tmp/deb_extract
+        
+        DYLIB_FILE=$(find /tmp/deb_extract -name "VCAM.dylib" | head -1)
+        
+        if [ -f "$DYLIB_FILE" ]; then
+          echo "✅ 找到 dylib: $DYLIB_FILE"
+          echo ""
+          echo "文件信息:"
+          file "$DYLIB_FILE"
+          echo ""
+          echo "大小: $(ls -lh "$DYLIB_FILE" | awk '{print $5}')"
+        else
+          echo "❌ 找不到 VCAM.dylib"
+        fi
+
+    # ============================================
+    # 上传构建产物
+    # ============================================
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: VCAM-Test-iOS14.6-${{ github.sha }}
+        path: packages/*.deb
+        retention-days: 30
+
+    # ============================================
+    # 生成构建信息
+    # ============================================
+    - name: Generate Build Info
+      run: |
+        cat > BUILD_INFO.md << 'EOF'
+# VCAM Test Build - iOS 14.6 兼容版本
+
+## 🎯 构建信息
+
+- **版本**: Hello World 测试版
+- **SDK**: iOS 14.5 (最接近 iOS 14.6)
+- **目标设备**: iPhone 12, iOS 14.6
+- **架构**: arm64
+- **最低支持**: iOS 14.0
+- **构建环境**: Ubuntu + Theos (Linux)
+
+## ✅ 这个版本的特点
+
+- **使用旧版 SDK**: iOS 14.5 而非 iOS 26.1
+- **最小化测试**: 仅包含 Hello World 功能
+- **完全兼容**: 专为 iOS 14.6 优化
+
+## 📝 测试说明
+
+### 功能
+1. Hook SpringBoard 启动
+2. 打印系统日志
+3. 显示测试弹窗（3秒后出现）
+
+### 安装
+```bash
+# 传输到设备
+scp -P 2222 *.deb root@localhost:/var/root/
+
+# 安装
+ssh -p 2222 root@localhost
+dpkg -i /var/root/*.deb
+killall -9 SpringBoard
+```
+
+### 期望结果
+- ✅ SpringBoard 正常重启
+- ✅ 弹出 "VCAM Test" 提示框
+- ✅ 系统日志中有 VCAM 输出
+- ✅ **不崩溃**
+
+### 如果成功
+说明问题确实是 M4 Mac 的 SDK 版本导致的，原项目代码本身没问题。
+
+### 如果失败
+说明可能还有其他兼容性问题，需要进一步调试。
+
+## 🔍 查看日志
+```bash
+ssh -p 2222 root@localhost
+log show --last 5m --predicate 'eventMessage contains "VCAM"'
+```
+
+---
+
+**构建时间**: $(date -u)
+**Commit**: ${{ github.sha }}
+**分支**: ${{ github.ref_name }}
+EOF
+        
+        cat BUILD_INFO.md
+
+    - name: Upload Build Info
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-info-${{ github.sha }}
+        path: BUILD_INFO.md
+
+    # ============================================
+    # 构建摘要
+    # ============================================
+    - name: Build Summary
+      if: always()
+      run: |
+        echo "=================================="
+        echo "📦 VCAM Test 构建完成"
+        echo "=================================="
+        echo ""
+        echo "✅ SDK: iOS 14.5"
+        echo "✅ 目标: iOS 14.6 (iPhone 12)"
+        echo "✅ 架构: arm64"
+        echo ""
+        if [ -f packages/*.deb ]; then
+          echo "📦 生成的包:"
+          ls -lh packages/*.deb
+        fi
+        echo ""
+        echo "💡 下载 Artifacts 来获取 deb 包"
