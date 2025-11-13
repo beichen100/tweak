@@ -186,21 +186,21 @@ jobs:
         cp Makefile Makefile.backup
         
         # 创建针对 iOS 14.6 优化的 Makefile
-        cat > Makefile << 'EOF'
-export TARGET = iphone:clang:14.5:14.0
-export ARCHS = arm64
-INSTALL_TARGET_PROCESSES = SpringBoard
-
-include $(THEOS)/makefiles/common.mk
-
-TWEAK_NAME = VCAM
-
-VCAM_FILES = Tweak.x
-VCAM_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
-VCAM_FRAMEWORKS = UIKit Foundation
-
-include $(THEOS_MAKE_PATH)/tweak.mk
-EOF
+        cat > Makefile << 'MAKEFILE_EOF'
+        export TARGET = iphone:clang:14.5:14.0
+        export ARCHS = arm64
+        INSTALL_TARGET_PROCESSES = SpringBoard
+        
+        include $(THEOS)/makefiles/common.mk
+        
+        TWEAK_NAME = VCAM
+        
+        VCAM_FILES = Tweak.x
+        VCAM_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
+        VCAM_FRAMEWORKS = UIKit Foundation
+        
+        include $(THEOS_MAKE_PATH)/tweak.mk
+        MAKEFILE_EOF
         
         echo "✅ Makefile 已配置为使用 iOS 14.5 SDK"
         cat Makefile
