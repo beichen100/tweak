@@ -220,9 +220,11 @@ jobs:
         cp Makefile Makefile.backup
         
         # 创建针对 iOS 14.6 优化的 Makefile
+        # 注意：Architecture 设为 arm64，但 control 中保持 iphoneos-arm 以兼容系统识别
         cat > Makefile << 'MAKEFILE_EOF'
         export TARGET = iphone:clang:14.5:14.0
         export ARCHS = arm64
+        export DEB_ARCH = iphoneos-arm
         INSTALL_TARGET_PROCESSES = SpringBoard
         
         include $(THEOS)/makefiles/common.mk

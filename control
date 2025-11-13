@@ -1,6 +1,6 @@
 Package: com.trizau.sileo.vcam
 Name: VCAM Test - Hello World
-Version: 1.0.2
+Version: 1.0.3
 Architecture: iphoneos-arm
 Description: Test build for iOS 14.6 compatibility (Hello World version)
 Maintainer: beichen100
