@@ -389,6 +389,10 @@ static NSTimeInterval g_volume_down_time = 0;
     NSTimeInterval nowtime = [[NSDate date] timeIntervalSince1970];
     NSLog(@"[VCAM] Volume Up pressed");
     
+    // 写入日志文件测试
+    NSString *log = [NSString stringWithFormat:@"Volume UP at %f\n", nowtime];
+    [log writeToFile:@"/var/mobile/Library/Logs/vcam_volume.log" atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    
     if (g_volume_down_time != 0 && nowtime - g_volume_down_time < 1) {
         NSLog(@"[VCAM] 触发选择视频");
         ui_selectVideo();
@@ -400,6 +404,10 @@ static NSTimeInterval g_volume_down_time = 0;
 - (void)decreaseVolume {
     NSTimeInterval nowtime = [[NSDate date] timeIntervalSince1970];
     NSLog(@"[VCAM] Volume Down pressed");
+    
+    // 写入日志文件测试
+    NSString *log = [NSString stringWithFormat:@"Volume DOWN at %f\n", nowtime];
+    [log writeToFile:@"/var/mobile/Library/Logs/vcam_volume.log" atomically:NO encoding:NSUTF8StringEncoding error:nil];
     
     if (g_volume_up_time != 0 && nowtime - g_volume_up_time < 1) {
         NSLog(@"[VCAM] 触发菜单");
@@ -468,6 +476,10 @@ static NSTimeInterval g_volume_down_time = 0;
 %end
 
 %ctor {
+    // 写入测试文件证明tweak已加载
+    NSString *testLog = @"[VCAM] Tweak loaded successfully\n";
+    [testLog writeToFile:@"/var/mobile/Library/Logs/vcam_loaded.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    
     NSLog(@"===============================================");
     NSLog(@"[VCAM] Virtual Camera Tweak Loaded");
     NSLog(@"[VCAM] iOS Version: %@", [[UIDevice currentDevice] systemVersion]);
