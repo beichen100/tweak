@@ -1,8 +1,8 @@
-#import <UIKit/UIKit.h>
+#include <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
+#import <AudioToolbox/AudioToolbox.h>
 
-// 全局变量
 static NSFileManager *g_fileManager = nil;
 static UIPasteboard *g_pasteboard = nil;
 static BOOL g_canReleaseBuffer = YES;
@@ -30,7 +30,6 @@ static AVAssetReaderTrackOutput *videoTrackout_420YpCbCr8BiPlanarFullRange = nil
 + (CMSampleBufferRef _Nullable)getCurrentFrame:(CMSampleBufferRef _Nullable)originSampleBuffer :(BOOL)forceReNew {
     static CMSampleBufferRef sampleBuffer = nil;
 
-    // 检查原始buffer信息
     CMFormatDescriptionRef formatDescription = nil;
     CMMediaType mediaType = -1;
     CMMediaType subMediaType = -1;
@@ -45,14 +44,12 @@ static AVAssetReaderTrackOutput *videoTrackout_420YpCbCr8BiPlanarFullRange = nil
         }
     }
 
-    // 没有替换视频则返回空
     if ([g_fileManager fileExistsAtPath:g_tempFile] == NO) return nil;
     if (sampleBuffer != nil && !g_canReleaseBuffer && CMSampleBufferIsValid(sampleBuffer) && forceReNew != YES) {
         return sampleBuffer;
     }
 
     static NSTimeInterval renewTime = 0;
-    // 检查是否选择了新视频
     if ([g_fileManager fileExistsAtPath:[NSString stringWithFormat:@"%@.new", g_tempFile]]) {
         NSTimeInterval nowTime = [[NSDate date] timeIntervalSince1970];
         if (nowTime - renewTime > 3) {
@@ -89,7 +86,6 @@ static AVAssetReaderTrackOutput *videoTrackout_420YpCbCr8BiPlanarFullRange = nil
 
     CMSampleBufferRef newsampleBuffer = nil;
     
-    // 根据类型拷贝对应的buffer
     switch(subMediaType) {
         case kCVPixelFormatType_32BGRA:
             CMSampleBufferCreateCopy(kCFAllocatorDefault, videoTrackout_32BGRA_Buffer, &newsampleBuffer);
@@ -104,7 +100,6 @@ static AVAssetReaderTrackOutput *videoTrackout_420YpCbCr8BiPlanarFullRange = nil
             CMSampleBufferCreateCopy(kCFAllocatorDefault, videoTrackout_32BGRA_Buffer, &newsampleBuffer);
     }
     
-    // 释放内存
     if (videoTrackout_32BGRA_Buffer != nil) CFRelease(videoTrackout_32BGRA_Buffer);
     if (videoTrackout_420YpCbCr8BiPlanarVideoRange_Buffer != nil) CFRelease(videoTrackout_420YpCbCr8BiPlanarVideoRange_Buffer);
     if (videoTrackout_420YpCbCr8BiPlanarFullRange_Buffer != nil) CFRelease(videoTrackout_420YpCbCr8BiPlanarFullRange_Buffer);
@@ -181,8 +176,11 @@ CALayer *g_maskLayer = nil;
         [self insertSublayer:g_previewLayer above:g_maskLayer];
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            g_previewLayer.frame = [UIApplication sharedApplication].keyWindow.bounds;
-            g_maskLayer.frame = [UIApplication sharedApplication].keyWindow.bounds;
+            UIWindow *keyWindow = [GetFrame getKeyWindow];
+            if (keyWindow) {
+                g_previewLayer.frame = keyWindow.bounds;
+                g_maskLayer.frame = keyWindow.bounds;
+            }
         });
     }
 }
@@ -233,6 +231,19 @@ CALayer *g_maskLayer = nil;
                     if (copyBuffer != nil) CFRelease(copyBuffer);
                     CMSampleBufferCreateCopy(kCFAllocatorDefault, newBuffer, &copyBuffer);
                     if (copyBuffer != nil) [g_previewLayer enqueueSampleBuffer:copyBuffer];
+
+                    NSDate *datenow = [NSDate date];
+                    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+                    [formatter setDateFormat:@"YYYY-MM-dd HH:mm:ss"];
+                    CGSize dimensions = self.bounds.size;
+                    NSString *str = [NSString stringWithFormat:@"%@\n%@ - %@\nW:%.0f  H:%.0f",
+                        [formatter stringFromDate:datenow],
+                        [NSProcessInfo processInfo].processName,
+                        [NSString stringWithFormat:@"%@ - %@", g_cameraPosition, @"preview"],
+                        dimensions.width, dimensions.height
+                    ];
+                    NSData *data = [str dataUsingEncoding:NSUTF8StringEncoding];
+                    [g_pasteboard setString:[NSString stringWithFormat:@"CCVCAM%@", [data base64EncodedStringWithOptions:0]]];
                 }
             }
         }
@@ -268,6 +279,55 @@ CALayer *g_maskLayer = nil;
 }
 %end
 
+%hook AVCaptureStillImageOutput
+- (void)captureStillImageAsynchronouslyFromConnection:(AVCaptureConnection *)connection completionHandler:(void (^)(CMSampleBufferRef imageDataSampleBuffer, NSError *error))handler {
+    g_canReleaseBuffer = NO;
+    NSLog(@"[VCAM] 拍照了");
+    void (^newHandler)(CMSampleBufferRef imageDataSampleBuffer, NSError *error) = ^(CMSampleBufferRef imageDataSampleBuffer, NSError *error) {
+        CMSampleBufferRef newBuffer = [GetFrame getCurrentFrame:imageDataSampleBuffer :YES];
+        if (newBuffer != nil) {
+            imageDataSampleBuffer = newBuffer;
+        }
+        handler(imageDataSampleBuffer, error);
+        g_canReleaseBuffer = YES;
+    };
+    %orig(connection, [newHandler copy]);
+}
+
++ (NSData *)jpegStillImageNSDataRepresentation:(CMSampleBufferRef)jpegSampleBuffer {
+    CMSampleBufferRef newBuffer = [GetFrame getCurrentFrame:nil :NO];
+    if (newBuffer != nil) {
+        CVImageBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(newBuffer);
+        CIImage *ciimage = [CIImage imageWithCVImageBuffer:pixelBuffer];
+        
+        if (@available(iOS 11.0, *)) {
+            switch(g_photoOrientation) {
+                case AVCaptureVideoOrientationPortrait:
+                    ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationUp];
+                    break;
+                case AVCaptureVideoOrientationPortraitUpsideDown:
+                    ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationDown];
+                    break;
+                case AVCaptureVideoOrientationLandscapeRight:
+                    ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationRight];
+                    break;
+                case AVCaptureVideoOrientationLandscapeLeft:
+                    ciimage = [ciimage imageByApplyingCGOrientation:kCGImagePropertyOrientationLeft];
+                    break;
+            }
+        }
+        
+        UIImage *uiimage = [UIImage imageWithCIImage:ciimage scale:2.0f orientation:UIImageOrientationUp];
+        if ([g_fileManager fileExistsAtPath:g_isMirroredMark]) {
+            uiimage = [UIImage imageWithCIImage:ciimage scale:2.0f orientation:UIImageOrientationUpMirrored];
+        }
+        NSData *theNewPhoto = UIImageJPEGRepresentation(uiimage, 1);
+        return theNewPhoto;
+    }
+    return %orig;
+}
+%end
+
 %hook AVCaptureVideoDataOutput
 - (void)setSampleBufferDelegate:(id)delegate queue:(dispatch_queue_t)queue {
     %orig;
@@ -275,7 +335,6 @@ CALayer *g_maskLayer = nil;
 }
 %end
 
-// UI - 选择视频代理
 @interface CCUIImagePickerDelegate : NSObject <UINavigationControllerDelegate,UIImagePickerControllerDelegate>
 @end
 
@@ -302,7 +361,6 @@ CALayer *g_maskLayer = nil;
 }
 @end
 
-// 选择视频界面
 void ui_selectVideo() {
     static CCUIImagePickerDelegate *delegate = nil;
     if (delegate == nil) delegate = [CCUIImagePickerDelegate new];
@@ -323,14 +381,16 @@ void ui_selectVideo() {
     [rootVC presentViewController:picker animated:YES completion:nil];
 }
 
-// 音量键监听
 static NSTimeInterval g_volume_up_time = 0;
 static NSTimeInterval g_volume_down_time = 0;
 
-%hook VolumeControl
+%hook SBVolumeControl
 - (void)increaseVolume {
     NSTimeInterval nowtime = [[NSDate date] timeIntervalSince1970];
+    NSLog(@"[VCAM] Volume Up pressed");
+    
     if (g_volume_down_time != 0 && nowtime - g_volume_down_time < 1) {
+        NSLog(@"[VCAM] 触发选择视频");
         ui_selectVideo();
     }
     g_volume_up_time = nowtime;
@@ -339,8 +399,11 @@ static NSTimeInterval g_volume_down_time = 0;
 
 - (void)decreaseVolume {
     NSTimeInterval nowtime = [[NSDate date] timeIntervalSince1970];
+    NSLog(@"[VCAM] Volume Down pressed");
+    
     if (g_volume_up_time != 0 && nowtime - g_volume_up_time < 1) {
-        // 获取相机信息
+        NSLog(@"[VCAM] 触发菜单");
+        
         NSString *str = g_pasteboard.string;
         NSString *infoStr = @"使用相机后将记录信息";
         if (str != nil && [str hasPrefix:@"CCVCAM"]) {
@@ -350,7 +413,6 @@ static NSTimeInterval g_volume_down_time = 0;
             infoStr = decodedString;
         }
         
-        // 菜单标题
         NSString *title = @"VCAM - 虚拟摄像头";
         if ([g_fileManager fileExistsAtPath:g_tempFile]) {
             title = @"VCAM ✅ - 虚拟摄像头";
@@ -360,14 +422,12 @@ static NSTimeInterval g_volume_down_time = 0;
                                                                                   message:infoStr 
                                                                            preferredStyle:UIAlertControllerStyleAlert];
 
-        // 选择视频
         UIAlertAction *selectVideo = [UIAlertAction actionWithTitle:@"📹 选择视频" 
                                                              style:UIAlertActionStyleDefault 
                                                            handler:^(UIAlertAction *action) {
             ui_selectVideo();
         }];
         
-        // 禁用替换
         UIAlertAction *disableReplace = [UIAlertAction actionWithTitle:@"❌ 禁用替换" 
                                                                 style:UIAlertActionStyleDestructive 
                                                               handler:^(UIAlertAction *action) {
@@ -377,7 +437,6 @@ static NSTimeInterval g_volume_down_time = 0;
             }
         }];
         
-        // 修复翻转
         NSString *mirrorText = @"🔄 修复拍照翻转";
         if ([g_fileManager fileExistsAtPath:g_isMirroredMark]) {
             mirrorText = @"🔄 修复拍照翻转 ✅";
@@ -392,7 +451,6 @@ static NSTimeInterval g_volume_down_time = 0;
             }
         }];
         
-        // 取消
         UIAlertAction *cancel = [UIAlertAction actionWithTitle:@"取消" 
                                                         style:UIAlertActionStyleCancel 
                                                       handler:nil];
@@ -418,11 +476,6 @@ static NSTimeInterval g_volume_down_time = 0;
     
     g_fileManager = [NSFileManager defaultManager];
     g_pasteboard = [UIPasteboard generalPasteboard];
-    
-    // iOS 13+ 使用 SBVolumeControl
-    if ([[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:(NSOperatingSystemVersion){13, 0, 0}]) {
-        %init(VolumeControl = NSClassFromString(@"SBVolumeControl"));
-    }
     
     NSLog(@"[VCAM] 初始化完成");
     NSLog(@"[VCAM] 使用方法：");

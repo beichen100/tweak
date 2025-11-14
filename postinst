@@ -1,7 +1,15 @@
-#!/bin/bash
+#!/bin/sh
 
-# VCAM Test - 简化的安装后脚本
-echo "VCAM Test installed successfully"
+# Tạo thư mục cache nếu chưa tồn tại
+mkdir -p /var/mobile/Library/Caches
 
-exit 0
- 
+# Thiết lập quyền truy cập
+chmod 755 /var/mobile/Library/Caches
+chown mobile:mobile /var/mobile/Library/Caches
+
+# Khởi động lại các dịch vụ cần thiết
+killall -9 Camera 2>/dev/null || true
+uicache -p /Applications/Camera.app
+ldrestart 2>/dev/null || killall -9 SpringBoard
+
+exit 0 

@@ -7,7 +7,11 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = VCAM
 
 VCAM_FILES = Tweak.x
-VCAM_CFLAGS = -fobjc-arc
+VCAM_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
+VCAM_FRAMEWORKS = UIKit Foundation AVFoundation CoreMedia CoreVideo QuartzCore CoreImage CoreGraphics
+VCAM_LIBRARIES = substrate
 
-DPKG_DEB = dpkg-deb -Zgzip -z6
 include $(THEOS_MAKE_PATH)/tweak.mk
+
+after-install::
+	install.exec "sbreload || killall -9 SpringBoard"
