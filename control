@@ -1,10 +1,10 @@
 Package: com.trizau.vcamtest
 Name: VCAM - Virtual Camera
-Version: 2.0.1
+Version: 2.1.0
 Architecture: iphoneos-arm
 Priority: optional
 Section: Tweaks
 Depends: mobilesubstrate
 Maintainer: beichen100
 Author: beichen100
-Description: Replace real camera with custom video for iOS 14.6+
+Description: Replace real camera with custom video for iOS 14.6+. Use Volume+/- to select video and open menu.

@@ -275,6 +275,140 @@ CALayer *g_maskLayer = nil;
 }
 %end
 
+// UI - 选择视频代理
+@interface CCUIImagePickerDelegate : NSObject <UINavigationControllerDelegate,UIImagePickerControllerDelegate>
+@end
+
+@implementation CCUIImagePickerDelegate
+- (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary<NSString *,id> *)info {
+    [[GetFrame getKeyWindow].rootViewController dismissViewControllerAnimated:YES completion:nil];
+    
+    NSString *selectFile = [info[@"UIImagePickerControllerMediaURL"] path];
+    if ([g_fileManager fileExistsAtPath:g_tempFile]) {
+        [g_fileManager removeItemAtPath:g_tempFile error:nil];
+    }
+
+    if ([g_fileManager copyItemAtPath:selectFile toPath:g_tempFile error:nil]) {
+        [g_fileManager createDirectoryAtPath:[NSString stringWithFormat:@"%@.new", g_tempFile] withIntermediateDirectories:YES attributes:nil error:nil];
+        sleep(1);
+        [g_fileManager removeItemAtPath:[NSString stringWithFormat:@"%@.new", g_tempFile] error:nil];
+        
+        NSLog(@"[VCAM] 已选择视频: %@", selectFile);
+    }
+}
+
+- (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
+    [[GetFrame getKeyWindow].rootViewController dismissViewControllerAnimated:YES completion:nil];
+}
+@end
+
+// 选择视频界面
+void ui_selectVideo() {
+    static CCUIImagePickerDelegate *delegate = nil;
+    if (delegate == nil) delegate = [CCUIImagePickerDelegate new];
+    
+    UIImagePickerController *picker = [[UIImagePickerController alloc] init];
+    picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
+    picker.mediaTypes = @[@"public.movie"];
+    picker.videoQuality = UIImagePickerControllerQualityTypeHigh;
+    if (@available(iOS 11.0, *)) {
+        picker.videoExportPreset = AVAssetExportPresetPassthrough;
+    }
+    picker.allowsEditing = YES;
+    picker.delegate = delegate;
+    
+    UIViewController *rootVC = [GetFrame getKeyWindow].rootViewController;
+    picker.modalPresentationStyle = UIModalPresentationOverFullScreen;
+    picker.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
+    [rootVC presentViewController:picker animated:YES completion:nil];
+}
+
+// 音量键监听
+static NSTimeInterval g_volume_up_time = 0;
+static NSTimeInterval g_volume_down_time = 0;
+
+%hook VolumeControl
+- (void)increaseVolume {
+    NSTimeInterval nowtime = [[NSDate date] timeIntervalSince1970];
+    if (g_volume_down_time != 0 && nowtime - g_volume_down_time < 1) {
+        ui_selectVideo();
+    }
+    g_volume_up_time = nowtime;
+    %orig;
+}
+
+- (void)decreaseVolume {
+    NSTimeInterval nowtime = [[NSDate date] timeIntervalSince1970];
+    if (g_volume_up_time != 0 && nowtime - g_volume_up_time < 1) {
+        // 获取相机信息
+        NSString *str = g_pasteboard.string;
+        NSString *infoStr = @"使用相机后将记录信息";
+        if (str != nil && [str hasPrefix:@"CCVCAM"]) {
+            str = [str substringFromIndex:6];
+            NSData *decodedData = [[NSData alloc] initWithBase64EncodedString:str options:0];
+            NSString *decodedString = [[NSString alloc] initWithData:decodedData encoding:NSUTF8StringEncoding];
+            infoStr = decodedString;
+        }
+        
+        // 菜单标题
+        NSString *title = @"VCAM - 虚拟摄像头";
+        if ([g_fileManager fileExistsAtPath:g_tempFile]) {
+            title = @"VCAM ✅ - 虚拟摄像头";
+        }
+        
+        UIAlertController *alertController = [UIAlertController alertControllerWithTitle:title 
+                                                                                  message:infoStr 
+                                                                           preferredStyle:UIAlertControllerStyleAlert];
+
+        // 选择视频
+        UIAlertAction *selectVideo = [UIAlertAction actionWithTitle:@"📹 选择视频" 
+                                                             style:UIAlertActionStyleDefault 
+                                                           handler:^(UIAlertAction *action) {
+            ui_selectVideo();
+        }];
+        
+        // 禁用替换
+        UIAlertAction *disableReplace = [UIAlertAction actionWithTitle:@"❌ 禁用替换" 
+                                                                style:UIAlertActionStyleDestructive 
+                                                              handler:^(UIAlertAction *action) {
+            if ([g_fileManager fileExistsAtPath:g_tempFile]) {
+                [g_fileManager removeItemAtPath:g_tempFile error:nil];
+                NSLog(@"[VCAM] 已禁用视频替换");
+            }
+        }];
+        
+        // 修复翻转
+        NSString *mirrorText = @"🔄 修复拍照翻转";
+        if ([g_fileManager fileExistsAtPath:g_isMirroredMark]) {
+            mirrorText = @"🔄 修复拍照翻转 ✅";
+        }
+        UIAlertAction *toggleMirror = [UIAlertAction actionWithTitle:mirrorText 
+                                                              style:UIAlertActionStyleDefault 
+                                                            handler:^(UIAlertAction *action) {
+            if ([g_fileManager fileExistsAtPath:g_isMirroredMark]) {
+                [g_fileManager removeItemAtPath:g_isMirroredMark error:nil];
+            } else {
+                [g_fileManager createDirectoryAtPath:g_isMirroredMark withIntermediateDirectories:YES attributes:nil error:nil];
+            }
+        }];
+        
+        // 取消
+        UIAlertAction *cancel = [UIAlertAction actionWithTitle:@"取消" 
+                                                        style:UIAlertActionStyleCancel 
+                                                      handler:nil];
+
+        [alertController addAction:selectVideo];
+        [alertController addAction:disableReplace];
+        [alertController addAction:toggleMirror];
+        [alertController addAction:cancel];
+        
+        [[GetFrame getKeyWindow].rootViewController presentViewController:alertController animated:YES completion:nil];
+    }
+    g_volume_down_time = nowtime;
+    %orig;
+}
+%end
+
 %ctor {
     NSLog(@"===============================================");
     NSLog(@"[VCAM] Virtual Camera Tweak Loaded");
@@ -285,5 +419,13 @@ CALayer *g_maskLayer = nil;
     g_fileManager = [NSFileManager defaultManager];
     g_pasteboard = [UIPasteboard generalPasteboard];
     
+    // iOS 13+ 使用 SBVolumeControl
+    if ([[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:(NSOperatingSystemVersion){13, 0, 0}]) {
+        %init(VolumeControl = NSClassFromString(@"SBVolumeControl"));
+    }
+    
     NSLog(@"[VCAM] 初始化完成");
+    NSLog(@"[VCAM] 使用方法：");
+    NSLog(@"[VCAM]   - 音量+ 然后 音量- : 选择视频");
+    NSLog(@"[VCAM]   - 音量- 然后 音量+ : 打开菜单");
 }
