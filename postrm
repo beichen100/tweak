@@ -1,10 +1,7 @@
-#!/bin/sh
+#!/bin/bash
 
-# Xóa các file tạm
-rm -f /var/mobile/Library/Caches/temp.mov
-rm -f /var/mobile/Library/Caches/vcam_is_mirrored_mark
+# VCAM Test - 简化的卸载脚本
+echo "VCAM Test removed"
 
-# Khởi động lại SpringBoard
-killall -9 SpringBoard
-
-exit 0 
+exit 0
+ 
